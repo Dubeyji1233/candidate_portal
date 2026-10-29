@@ -1,0 +1,38 @@
+{
+  "verdict": "CHANGES_REQUESTED",
+  "findings": [
+    {
+      "id": 1,
+      "severity": "MEDIUM",
+      "title": "Reconnect 're-save answers' has no server endpoint for mid-exam MCQ saves",
+      "where": "Decision 8; Files-to-change (assessment_take.html)",
+      "problem": "MCQ selections are only persisted inside /submit (which finalizes and scores and requires status=='In Progress'); there is no incremental MCQ-save route and no localStorage buffering. 'Extend autosave to MCQ selections' names an unspecified flow. Reusing /submit would prematurely finalize the attempt.",
+      "fix": "Pick one and specify it: (a) add POST /api/assessment/<id>/autosave with ownership + In-Progress guard that upserts partial answers (e.g. assessment_attempts.draft_answers JSON via the same guarded migration) without scoring, read as fallback in /submit; or (b) buffer answers in localStorage keyed by attempt_id and drop the server 'extend to MCQ' claim."
+    },
+    {
+      "id": 2,
+      "severity": "NIT",
+      "title": "New candidate routes omit @login_required_with_session used by every other candidate route",
+      "where": "Decision 7 (/precheck, /registered-photo, /heartbeat)",
+      "problem": "All existing candidate routes stack @login_required and @login_required_with_session; the new routes specify only @login_required. Ownership helper covers the IDOR but the session guard is inconsistent.",
+      "fix": "State the new candidate routes use @login_required + @login_required_with_session + _own_attempt(attempt_id), matching the existing stack."
+    },
+    {
+      "id": 3,
+      "severity": "NIT",
+      "title": "Migration is manual and db.create_all() will not ALTER existing tables",
+      "where": "Decision 2",
+      "problem": "SQLAlchemy create_all never ALTERs existing tables, so new model columns do not exist until the .sql is hand-run; raw inserts referencing them fail at runtime if the migration lags the code deploy.",
+      "fix": "Add a deploy note that the .sql must run before deploying the new Main.py; optionally a startup information_schema presence check that logs a clear error if unapplied."
+    },
+    {
+      "id": 4,
+      "severity": "NIT",
+      "title": "detection_source column default 'client' requires every server insert to set it explicitly",
+      "where": "Decision 2 migration; Decision 9",
+      "problem": "Column default is 'client'; any server-originated insert that omits detection_source would be mislabeled as client, defeating the required client-vs-server separation.",
+      "fix": "State that all server-originated inserts set detection_source explicitly ('server'); the default exists only for backward compatibility of the existing /violation path."
+    }
+  ],
+  "reviewDoc": "c:\\Users\\abhishekdubey\\PycharmProjects\\Candidate_portal\\.agents\\design-review.md"
+}

@@ -1,0 +1,36 @@
+{
+  "approved": true,
+  "reviewDoc": "c:\\Users\\abhishekdubey\\PycharmProjects\\Candidate_portal\\.agents\\behavior-review.md",
+  "findings": [
+    {
+      "label": "DB runtime verification deferred",
+      "severity": "non-blocking",
+      "confidence": "possible",
+      "detail": "Incident de-dup, deadline, ownership 403s, autosave, heartbeat staleness, and CSV export have no executed evidence (no project venv, no MySQL in-env). Run the documented manual smoke tests and `python -m pytest tests/test_violation_engine.py` in the deploy-compatible venv before sign-off."
+    },
+    {
+      "label": "Client reload uses localStorage only",
+      "severity": "non-blocking",
+      "confidence": "possible",
+      "detail": "restoreDraftSelections() reads localStorage, never the server draft_answers, so resuming on a different browser/device shows no prior selections. Score safety still holds via the /submit server-side draft fallback; wire the server draft into the render if cross-device resume UX is wanted."
+    },
+    {
+      "label": "Autosave drops option letters beyond A-D",
+      "severity": "non-blocking",
+      "confidence": "possible",
+      "detail": "/autosave keeps only values in ('A','B','C','D'). Any MCQ with more than four options would not persist those selections to the draft (the live /submit POST still captures them). Confirm no assessment uses >4 options, or widen the allowed set."
+    },
+    {
+      "label": "warning_count semantics changed",
+      "severity": "non-blocking",
+      "confidence": "likely",
+      "detail": "warning_count now increments once per distinct-incident warn rather than only on the first warning. Intended under the new engine; confirm the HR dashboard reading of warning_count expects a running count."
+    },
+    {
+      "label": "Second-granularity de-dup boundary",
+      "severity": "non-blocking",
+      "confidence": "possible",
+      "detail": "TIMESTAMPDIFF(SECOND,...)*1000 vs warning_cooldown_ms means a continuous incident whose POST lands just over the 4.5s window can occasionally produce a second row. Low impact; acceptable per design's second-granularity math."
+    }
+  ]
+}

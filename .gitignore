@@ -1,0 +1,14 @@
+﻿.env
+.env.*
+!.env.example
+server_monitor.py
+*.pt
+*.onnx
+*.tflite
+datasets/
+recordings/
+evidence/
+node_modules/
+.idea/
+__pycache__/
+*.pyc

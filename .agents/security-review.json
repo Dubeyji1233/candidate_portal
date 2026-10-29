@@ -1,0 +1,13 @@
+{
+  "approved": false,
+  "findings": [
+    "Finalized-attempt score rewrite (confirmed): a candidate can submit non-empty answers after completion or termination and replace the stored answers and score. Restore an atomic status == 'In Progress' guard and solve terminal answer freshness before the status transition.",
+    "Terminal answer acknowledgement gap (confirmed): the browser navigates after /submit regardless of HTTP/JSON success, so answers newer than the server draft can be lost. Remain in a retryable terminal-pending state until the server confirms the current answer set.",
+    "Devtools auto-termination (confirmed): devtools_open can terminate when automatic action is enabled and the human gate is disabled. Make it indicator-only and invariantly never-terminal.",
+    "Mutable precheck evidence (confirmed): an owner can replace identity/precheck evidence and reset identity_verified after finalization. Status-gate and make accepted evidence immutable except through a privileged recheck.",
+    "Discarded ear-review evidence (confirmed): ear-view frames are cleared without persistence, the output-device-label indicator is absent, and HR cannot read the stored precheck result. Persist and expose bounded review-only evidence without treating it as conclusive misconduct.",
+    "Continuous-incident row fragmentation (confirmed): repeats after one cooldown create additional rows with the same incident ID instead of extending one row. Deduplicate by stable incident identity or maintain a distinct server last-seen window.",
+    "Missing DB-backed verification (confirmed): the recorded evidence says the migration, authorization, transaction, deadline, dedup, autosave, heartbeat, and CSV checks were not run. Execute and attach those checks in a deployment-compatible venv against disposable MySQL before sign-off."
+  ],
+  "reviewDoc": "c:\\Users\\abhishekdubey\\PycharmProjects\\Candidate_portal\\.agents\\security-review.md"
+}
