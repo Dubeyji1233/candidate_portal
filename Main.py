@@ -862,17 +862,29 @@ def candidate_dashboard():
     requisitions = []
     try:
         with conn.cursor() as c:
-            c.execute("""SELECT id, job_title, department, number_of_openings,
-                                skills_required, location, budget, job_description,
-                                created_at, work_location_type, experience_required, screening_questions
-                         FROM requisitions WHERE status='Open' ORDER BY created_at DESC""")
+            # ★ CHANGED: added has_level2 — true only if there exists an active,
+            # non-sample assessment for this requisition that has at least one question.
+            c.execute("""
+                SELECT id, job_title, department, number_of_openings,
+                       skills_required, location, budget, job_description,
+                       created_at, work_location_type, experience_required, screening_questions,
+                       EXISTS (
+                           SELECT 1 FROM assessments a
+                           JOIN assessment_questions q ON q.assessment_id = a.id
+                           WHERE a.requisition_id = requisitions.id
+                             AND a.is_active = 1
+                             AND a.is_sample = 0
+                       ) AS has_level2
+                FROM requisitions
+                WHERE status='Open'
+                ORDER BY created_at DESC
+            """)
             requisitions = c.fetchall()
     except Exception as e:
         flash(f'Error loading jobs: {e}', 'danger')
     finally:
         if conn: conn.close()
     return render_template('candidate_dashboard.html', requisitions=requisitions)
-
 
 @app.route('/candidate-apply/<int:requisition_id>', methods=['POST'])
 @login_required
@@ -1069,6 +1081,8 @@ def candidate_assessments():
     conn = get_db_connection()
     rows = []
     sample = None
+    applications = []
+    default_id = None
     try:
         with conn.cursor() as c:
             c.execute("""SELECT * FROM assessments
@@ -1082,37 +1096,80 @@ def candidate_assessments():
             default_row = c.fetchone()
             default_id = default_row['id'] if default_row else None
 
+            # ★ CHANGED: distinguish L1 (default) from L2 (requisition-scoped, has questions).
             c.execute("""
                 SELECT c.id AS candidate_row_id,
                        c.requisition_id,
+                       c.selection_status,
                        c.created_at AS applied_date,
                        r.job_title,
                        r.department,
                        (SELECT a1.id FROM assessments a1
                         WHERE a1.requisition_id = c.requisition_id
                           AND a1.is_active = 1 AND a1.is_sample = 0
-                        ORDER BY a1.id DESC LIMIT 1) AS specific_assessment_id,
+                          AND EXISTS (SELECT 1 FROM assessment_questions q WHERE q.assessment_id = a1.id)
+                        ORDER BY a1.id DESC LIMIT 1) AS l2_assessment_id,
                        (SELECT at.id FROM assessment_attempts at
                         WHERE at.candidate_email = c.email
                           AND at.requisition_id = c.requisition_id
-                        ORDER BY at.id DESC LIMIT 1) AS attempt_id,
+                          AND at.assessment_id = %s
+                        ORDER BY at.id DESC LIMIT 1) AS l1_attempt_id,
                        (SELECT at.status FROM assessment_attempts at
                         WHERE at.candidate_email = c.email
                           AND at.requisition_id = c.requisition_id
-                        ORDER BY at.id DESC LIMIT 1) AS attempt_status,
+                          AND at.assessment_id = %s
+                        ORDER BY at.id DESC LIMIT 1) AS l1_attempt_status,
                        (SELECT at.rating FROM assessment_attempts at
                         WHERE at.candidate_email = c.email
                           AND at.requisition_id = c.requisition_id
-                        ORDER BY at.id DESC LIMIT 1) AS attempt_rating,
+                          AND at.assessment_id = %s
+                        ORDER BY at.id DESC LIMIT 1) AS l1_attempt_rating,
                        (SELECT at.submitted_at FROM assessment_attempts at
                         WHERE at.candidate_email = c.email
                           AND at.requisition_id = c.requisition_id
-                        ORDER BY at.id DESC LIMIT 1) AS attempt_submitted
+                          AND at.assessment_id = %s
+                        ORDER BY at.id DESC LIMIT 1) AS l1_attempt_submitted,
+                       (SELECT at.id FROM assessment_attempts at
+                        WHERE at.candidate_email = c.email
+                          AND at.requisition_id = c.requisition_id
+                          AND at.assessment_id = (SELECT a1.id FROM assessments a1
+                                                  WHERE a1.requisition_id = c.requisition_id
+                                                    AND a1.is_active = 1 AND a1.is_sample = 0
+                                                    AND EXISTS (SELECT 1 FROM assessment_questions q WHERE q.assessment_id = a1.id)
+                                                  ORDER BY a1.id DESC LIMIT 1)
+                        ORDER BY at.id DESC LIMIT 1) AS l2_attempt_id,
+                       (SELECT at.status FROM assessment_attempts at
+                        WHERE at.candidate_email = c.email
+                          AND at.requisition_id = c.requisition_id
+                          AND at.assessment_id = (SELECT a1.id FROM assessments a1
+                                                  WHERE a1.requisition_id = c.requisition_id
+                                                    AND a1.is_active = 1 AND a1.is_sample = 0
+                                                    AND EXISTS (SELECT 1 FROM assessment_questions q WHERE q.assessment_id = a1.id)
+                                                  ORDER BY a1.id DESC LIMIT 1)
+                        ORDER BY at.id DESC LIMIT 1) AS l2_attempt_status,
+                       (SELECT at.rating FROM assessment_attempts at
+                        WHERE at.candidate_email = c.email
+                          AND at.requisition_id = c.requisition_id
+                          AND at.assessment_id = (SELECT a1.id FROM assessments a1
+                                                  WHERE a1.requisition_id = c.requisition_id
+                                                    AND a1.is_active = 1 AND a1.is_sample = 0
+                                                    AND EXISTS (SELECT 1 FROM assessment_questions q WHERE q.assessment_id = a1.id)
+                                                  ORDER BY a1.id DESC LIMIT 1)
+                        ORDER BY at.id DESC LIMIT 1) AS l2_attempt_rating,
+                       (SELECT at.submitted_at FROM assessment_attempts at
+                        WHERE at.candidate_email = c.email
+                          AND at.requisition_id = c.requisition_id
+                          AND at.assessment_id = (SELECT a1.id FROM assessments a1
+                                                  WHERE a1.requisition_id = c.requisition_id
+                                                    AND a1.is_active = 1 AND a1.is_sample = 0
+                                                    AND EXISTS (SELECT 1 FROM assessment_questions q WHERE q.assessment_id = a1.id)
+                                                  ORDER BY a1.id DESC LIMIT 1)
+                        ORDER BY at.id DESC LIMIT 1) AS l2_attempt_submitted
                 FROM candidates c
                 JOIN requisitions r ON c.requisition_id = r.id
                 WHERE c.email = %s
                   AND (
-                       c.selection_status = 'Applied'
+                       c.selection_status IN ('Applied', 'Selected')
                        OR EXISTS (
                             SELECT 1 FROM assessment_attempts at
                             WHERE at.candidate_email = c.email
@@ -1120,7 +1177,7 @@ def candidate_assessments():
                        )
                   )
                 ORDER BY c.id DESC
-            """, (current_user.email,))
+            """, (default_id, default_id, default_id, default_id, current_user.email))
             applications = c.fetchall()
     except Exception as e:
         flash(f'Error: {e}', 'danger')
@@ -1129,17 +1186,40 @@ def candidate_assessments():
         if conn: conn.close()
 
     for a in applications:
-        aid = a['specific_assessment_id'] or default_id
+        status = a.get('selection_status') or 'Applied'
+        l2_id = a.get('l2_assessment_id')
+        l1_attempt_id = a.get('l1_attempt_id')
+        l2_attempt_id = a.get('l2_attempt_id')
+
+        # Pick which test to display for this application.
+        if l2_attempt_id:
+            aid, phase = l2_id, 'Level 2 (Technical)'
+            attempt_id = l2_attempt_id
+            attempt_status = a.get('l2_attempt_status')
+            rating, submitted = a.get('l2_attempt_rating'), a.get('l2_attempt_submitted')
+        elif status in ('Selected', 'Offer Letter Generated',
+                        'Offer Letter Accepted', 'Accepted') and l2_id:
+            aid, phase = l2_id, 'Level 2 (Technical)'
+            attempt_id = None
+            attempt_status = None
+            rating, submitted = None, None
+        elif l1_attempt_id:
+            aid, phase = default_id, 'Level 1 (Basic)'
+            attempt_id = l1_attempt_id
+            attempt_status = a.get('l1_attempt_status')
+            rating, submitted = a.get('l1_attempt_rating'), a.get('l1_attempt_submitted')
+        elif status == 'Applied' and default_id:
+            aid, phase = default_id, 'Level 1 (Basic)'
+            attempt_id = None
+            attempt_status = None
+            rating, submitted = None, None
+        else:
+            continue
+
         if not aid:
             continue
 
-        if not a['attempt_id'] or a['attempt_status'] == 'In Progress':
-            disp_status = 'Pending'
-            disp_result = '—'
-        else:
-            disp_status = 'Completed'
-            disp_result = 'Terminated' if a['attempt_status'] == 'Terminated' else 'Submitted'
-
+        closed = attempt_id is not None and attempt_status and attempt_status != 'In Progress'
         rows.append({
             'application_id': a['candidate_row_id'],
             'requisition_id': a['requisition_id'],
@@ -1147,11 +1227,13 @@ def candidate_assessments():
             'department': a['department'],
             'applied_date': a['applied_date'],
             'assessment_id': aid,
-            'attempt_id': a['attempt_id'],
-            'rating': a.get('attempt_rating'),
-            'attempt_submitted': a.get('attempt_submitted'),
-            'display_status': disp_status,
-            'display_result': disp_result,
+            'attempt_id': attempt_id,
+            'phase': phase,
+            'rating': rating,
+            'attempt_submitted': submitted,
+            'display_status': 'Completed' if closed else 'Pending',
+            'display_result': 'Terminated' if attempt_status == 'Terminated'
+                              else ('Submitted' if closed else '—'),
         })
 
     if status_filter and status_filter.lower() != 'all':
@@ -1235,7 +1317,7 @@ def start_assessment(assessment_id):
     conn = get_db_connection()
     try:
         with conn.cursor() as c:
-            c.execute("SELECT is_sample, duration_minutes FROM assessments WHERE id=%s",
+            c.execute("SELECT is_sample, duration_minutes, requisition_id FROM assessments WHERE id=%s",
                       (assessment_id,))
             ar = c.fetchone()
             if not ar:
@@ -1243,6 +1325,23 @@ def start_assessment(assessment_id):
                 return redirect(url_for('candidate_assessments'))
             is_sample = bool(ar['is_sample'])
             duration = int(ar['duration_minutes'] or 30)
+
+            # ★ CHANGED: Level-2 gate.
+            # If this assessment is scoped to a requisition (i.e., it's a Level 2),
+            # the candidate must already be Selected/Offer/Accepted/Completed for that
+            # requisition. Level 1 (default, non-scoped) is always allowed.
+            if not is_sample and ar['requisition_id'] is not None and requisition_id is not None:
+                c.execute("""SELECT selection_status FROM candidates
+                             WHERE email=%s AND requisition_id=%s
+                             ORDER BY id DESC LIMIT 1""",
+                          (current_user.email, requisition_id))
+                sel = c.fetchone()
+                allowed_states = ('Selected', 'Offer', 'Offer Letter Generated',
+                                  'Accepted', 'Offer Letter Accepted', 'Completed')
+                if not sel or sel['selection_status'] not in allowed_states:
+                    flash('Level 2 assessment is only available after HR marks you Selected.',
+                          'danger')
+                    return redirect(url_for('candidate_assessments'))
 
             if requisition_id is not None:
                 c.execute("""SELECT id, status, retest_allowed, deadline_at
@@ -1267,9 +1366,9 @@ def start_assessment(assessment_id):
 
             if ex and ex['status'] == 'In Progress' and not is_sample:
                 attempt_id = ex['id']
-                # If resuming, give them a fresh deadline
                 new_deadline = datetime.utcnow() + timedelta(minutes=duration)
-                c.execute("UPDATE assessment_attempts SET deadline_at=%s WHERE id=%s", (new_deadline, attempt_id))
+                c.execute("UPDATE assessment_attempts SET deadline_at=%s WHERE id=%s",
+                          (new_deadline, attempt_id))
             else:
                 c.execute("SELECT id FROM candidates WHERE email=%s ORDER BY id DESC LIMIT 1",
                           (current_user.email,))
@@ -1288,7 +1387,6 @@ def start_assessment(assessment_id):
                                requisition_id, now, deadline))
                     attempt_id = c.lastrowid
                 except pymysql.err.IntegrityError:
-
                     c.execute("""SELECT id FROM assessment_attempts
                                  WHERE candidate_email=%s AND assessment_id=%s
                                    AND IFNULL(requisition_id,-1)=IFNULL(%s,-1)
@@ -1457,12 +1555,13 @@ def assessment_violation(attempt_id):
             action = raw_action
             if raw_action == 'log_only':
                 action = 'log'
-            elif raw_action == 'warn_then_terminate':
+            elif raw_action in ('warn', 'warn_then_terminate'):
                 c.execute("SELECT warning_count FROM assessment_attempts WHERE id=%s FOR UPDATE", (attempt_id,))
                 wc_row = c.fetchone() or {}
                 wc = int(wc_row.get('warning_count') or 0)
 
-                if wc >= PROCTOR.max_warnings:
+                # Strict Rule: 1st = warn, 2nd = warn, 3rd = TERMINATE
+                if wc >= 2:
                     action = 'terminate'
                 else:
                     action = 'warn'
@@ -1641,11 +1740,9 @@ def assessment_submit(attempt_id):
                        summary_json, monitoring_json, submission_id, attempt_id))
 
             if status in ('Completed', 'Terminated') and locked['requisition_id'] is not None:
-                c.execute("""UPDATE candidates
-                             SET selection_status = 'In Process'
+                c.execute("""UPDATE candidates SET selection_status = 'In Process'
                              WHERE email=%s AND requisition_id=%s
-                               AND selection_status = 'Applied'""",
-                          (locked['candidate_email'], locked['requisition_id']))
+                               AND selection_status = 'Applied'""", ...)
         conn.commit()
     except Exception:
         try:
